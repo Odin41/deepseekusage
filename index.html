@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Usage Dashboard — Токены</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d28;
+    --surface2: #232738;
+    --border: #2d3248;
+    --text: #e1e4ed;
+    --text2: #8b90a5;
+    --accent: #6c8cff;
+    --accent2: #5b6fbf;
+    --green: #4ade80;
+    --orange: #fb923c;
+    --pink: #f472b6;
+    --cyan: #22d3ee;
+    --red: #f87171;
+    --yellow: #facc15;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+  /* Header */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 0; margin-bottom: 24px; border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 22px; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  header .sub { color: var(--text2); font-size: 13px; margin-top: 2px; }
+
+  /* Drop zone */
+  #dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 60px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.25s;
+    background: var(--surface);
+    margin-bottom: 24px;
+  }
+  #dropzone:hover, #dropzone.dragover {
+    border-color: var(--accent);
+    background: rgba(108,140,255,0.06);
+  }
+  #dropzone .icon { font-size: 40px; margin-bottom: 12px; color: var(--text2); }
+  #dropzone .title { font-size: 16px; font-weight: 500; margin-bottom: 6px; }
+  #dropzone .hint { font-size: 13px; color: var(--text2); }
+  #dropzone.loaded {
+    border-color: var(--green);
+    padding: 20px;
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+  }
+  #dropzone.loaded .icon { font-size: 24px; margin: 0; }
+  #dropzone.loaded .info { text-align: left; }
+  #dropzone.loaded .fname { font-weight: 500; }
+  #dropzone.loaded .fdetail { font-size: 12px; color: var(--text2); }
+  #dropzone input { display: none; }
+
+  /* Summary cards */
+  .summary {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px; margin-bottom: 24px;
+  }
+  .card {
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 16px;
+    border: 1px solid var(--border);
+  }
+  .card .label { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); margin-bottom: 4px; }
+  .card .value { font-size: 22px; font-weight: 700; }
+  .card .value.green { color: var(--green); }
+  .card .value.cyan { color: var(--cyan); }
+  .card .value.orange { color: var(--orange); }
+  .card .value.pink { color: var(--pink); }
+  .card .value.yellow { color: var(--yellow); }
+
+  /* Dashboard grid */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .grid-full { grid-column: 1 / -1; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--surface);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    padding: 16px;
+  }
+  .panel h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text2); text-transform: uppercase; letter-spacing: .5px; }
+  .chart-wrap { position: relative; height: 280px; }
+  .chart-wrap canvas { width: 100% !important; height: 100% !important; }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 10px 12px; background: var(--surface2); color: var(--text2); font-weight: 500; white-space: nowrap; border-bottom: 1px solid var(--border); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tr:hover td { background: rgba(108,140,255,0.04); }
+  .num { text-align: right; font-family: 'JetBrains Mono', 'Consolas', monospace; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; background: var(--surface2); }
+  .badge.pro { background: rgba(108,140,255,0.2); color: var(--accent); }
+  .badge.flash { background: rgba(34,211,238,0.15); color: var(--cyan); }
+  .badge.key-badge { background: rgba(250,204,21,0.15); color: var(--yellow); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; background: var(--surface); border-radius: 8px; padding: 4px; border: 1px solid var(--border); flex-wrap: wrap; }
+  .tab-btn { padding: 8px 20px; border: none; background: transparent; color: var(--text2); cursor: pointer; border-radius: 6px; font-size: 13px; font-weight: 500; transition: all .15s; }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { background: var(--accent); color: #fff; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Token selector */
+  .token-selector {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px; background: var(--surface); border-radius: 10px;
+    border: 1px solid var(--border); margin-bottom: 16px;
+  }
+  .token-selector label { font-size: 13px; color: var(--text2); font-weight: 500; white-space: nowrap; }
+  .token-selector select {
+    flex: 1; padding: 8px 12px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 13px; cursor: pointer;
+    max-width: 400px;
+  }
+  .token-selector select:focus { outline: none; border-color: var(--accent); }
+  .token-info {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px; margin-bottom: 16px;
+  }
+  .token-info .card { padding: 12px 16px; }
+  .token-info .card .label { font-size: 11px; }
+  .token-info .card .value { font-size: 18px; }
+  .token-empty { text-align: center; padding: 40px; color: var(--text2); font-size: 14px; }
+
+  .spinner { display: none; width: 24px; height: 24px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Key detail header */
+  .key-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 16px; background: var(--surface); border-radius: 10px;
+    border: 1px solid var(--border); margin-bottom: 16px;
+  }
+  .key-header .key-name { font-size: 18px; font-weight: 600; }
+  .key-header .key-partial { font-size: 12px; color: var(--text2); font-family: monospace; }
+  .key-header .key-models { display: flex; gap: 6px; margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <h1><span>Usage</span> Dashboard</h1>
+      <div class="sub">Загрузите ZIP-архивы с CSV-файлами usage_data (можно несколько сразу)</div>
+    </div>
+  </header>
+
+  <!-- Drop Zone -->
+  <div id="dropzone">
+    <div class="icon">&#128230;</div>
+    <div class="title">Выберите архив или перетащите его сюда</div>
+    <div class="hint">ZIP-архивы с CSV (cost-*.csv, amount-*.csv) — можно несколько сразу</div>
+    <input type="file" id="fileInput" accept=".zip" multiple>
+  </div>
+
+  <!-- Spinner -->
+  <div class="spinner" id="spinner"></div>
+
+  <!-- Summary -->
+  <div class="summary" id="summary" style="display:none"></div>
+
+  <!-- Tabs -->
+  <div class="tabs" id="tabs" style="display:none">
+    <button class="tab-btn active" data-tab="costs">Затраты</button>
+    <button class="tab-btn" data-tab="usage">Использование</button>
+    <button class="tab-btn" data-tab="charts">Графики</button>
+    <button class="tab-btn" data-tab="tokens">По токенам</button>
+  </div>
+
+  <!-- Tab: Costs -->
+  <div class="tab-content active" id="tab-costs">
+    <div class="grid">
+      <div class="panel grid-full">
+        <h3>Затраты по дням</h3>
+        <div class="table-wrap"><table id="costTable"><tbody></tbody></table></div>
+      </div>
+      <div class="panel grid-full">
+        <h3>Затраты по моделям</h3>
+        <div class="table-wrap"><table id="costModelTable"><tbody></tbody></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: Usage -->
+  <div class="tab-content" id="tab-usage">
+    <div class="grid">
+      <div class="panel grid-full">
+        <h3>Использование по дням</h3>
+        <div class="table-wrap"><table id="usageTable"><tbody></tbody></table></div>
+      </div>
+      <div class="panel grid-full">
+        <h3>Использование по типам (суммарно)</h3>
+        <div class="table-wrap"><table id="usageTypeTable"><tbody></tbody></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: Charts -->
+  <div class="tab-content" id="tab-charts">
+    <div class="grid">
+      <div class="panel"><h3>Затраты по дням</h3><div class="chart-wrap"><canvas id="chartCostDay"></canvas></div></div>
+      <div class="panel"><h3>Затраты по моделям</h3><div class="chart-wrap"><canvas id="chartCostModel"></canvas></div></div>
+      <div class="panel"><h3>Количество запросов по дням</h3><div class="chart-wrap"><canvas id="chartRequests"></canvas></div></div>
+      <div class="panel"><h3>Токены по дням (input / output)</h3><div class="chart-wrap"><canvas id="chartTokens"></canvas></div></div>
+      <div class="panel"><h3>Cache Hit Ratio</h3><div class="chart-wrap"><canvas id="chartCache"></canvas></div></div>
+      <div class="panel"><h3>Токены по моделям</h3><div class="chart-wrap"><canvas id="chartTokensModel"></canvas></div></div>
+    </div>
+  </div>
+
+  <!-- Tab: Tokens (API Keys) -->
+  <div class="tab-content" id="tab-tokens">
+    <!-- Token selector -->
+    <div class="token-selector">
+      <label>&#128273; Токен:</label>
+      <select id="tokenSelect" onchange="onTokenChange()">
+        <option value="__all__">— Все токены —</option>
+      </select>
+    </div>
+
+    <!-- Token overview table (all keys) -->
+    <div class="panel grid-full" style="margin-bottom:16px">
+      <h3>Сводка по токенам</h3>
+      <div class="table-wrap"><table id="tokenSummaryTable"><tbody></tbody></table></div>
+    </div>
+
+    <!-- Token detail section (shown when a specific token is selected) -->
+    <div id="tokenDetail" style="display:none">
+      <div class="key-header" id="keyHeader"></div>
+      <div class="token-info" id="tokenInfoCards"></div>
+
+      <div class="grid">
+        <div class="panel grid-full">
+          <h3>Затраты по дням</h3>
+          <div class="table-wrap"><table id="tokenCostTable"><tbody></tbody></table></div>
+        </div>
+        <div class="panel grid-full">
+          <h3>Использование по дням</h3>
+          <div class="table-wrap"><table id="tokenUsageTable"><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="panel"><h3 id="tkChartCostTitle">Затраты по дням</h3><div class="chart-wrap"><canvas id="chartTokenCost"></canvas></div></div>
+        <div class="panel"><h3 id="tkChartTokensTitle">Токены по дням</h3><div class="chart-wrap"><canvas id="chartTokenTokens"></canvas></div></div>
+        <div class="panel"><h3 id="tkChartReqTitle">Запросы по дням</h3><div class="chart-wrap"><canvas id="chartTokenReqs"></canvas></div></div>
+        <div class="panel"><h3 id="tkChartCacheTitle">Cache Hit Ratio</h3><div class="chart-wrap"><canvas id="chartTokenCache"></canvas></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// === State ===
+let costData = [];      // { date, model, cost, wallet, currency }
+let amountData = [];    // { date, model, key, type, price, amount }
+let charts = {};
+let loadedFiles = [];   // archive names loaded
+
+const COLORS = { 'deepseek-v4-pro': '#6c8cff', 'deepseek-v4-flash': '#22d3ee' };
+const MODEL_CLS = { 'deepseek-v4-pro': 'badge pro', 'deepseek-v4-flash': 'badge flash' };
+const MODEL_LABELS = { 'deepseek-v4-pro': 'DeepSeek V4 Pro', 'deepseek-v4-flash': 'DeepSeek V4 Flash' };
+
+// Token color palette
+const TOKEN_COLORS = ['#facc15', '#f472b6', '#22d3ee', '#fb923c', '#a78bfa', '#34d399', '#f87171', '#38bdf8'];
+
+// === Drop Zone ===
+const dz = document.getElementById('dropzone');
+dz.addEventListener('click', () => { const inp = document.getElementById('fileInput'); if(inp) inp.click(); });
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('dragover'); if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
+document.getElementById('fileInput').addEventListener('change', e => { if(e.target.files.length) handleFiles(e.target.files); });
+
+// === Main handler (multiple files) ===
+async function handleFiles(fileList) {
+  const archives = [...fileList].filter(f => f.name.endsWith('.zip'));
+  if (!archives.length) return alert('Пожалуйста, загрузите ZIP-архивы');
+  if (!loadedFiles.length) {
+    costData = [];
+    amountData = [];
+  }
+  document.getElementById('spinner').style.display = 'block';
+  let totalCsvFiles = 0;
+  try {
+    for (const file of archives) {
+      if (loadedFiles.includes(file.name)) continue; // skip duplicates
+      const zip = await JSZip.loadAsync(file);
+      const csvFiles = Object.keys(zip.files).filter(k => !zip.files[k].dir);
+      for (const name of csvFiles) {
+        const text = await zip.files[name].async('string');
+        const parsed = Papa.parse(text, { header: true, skipEmptyLines: true }).data;
+        if (name.startsWith('cost-')) {
+          parsed.forEach(r => {
+            if (r.utc_date && r.model && r.cost) costData.push({ date: r.utc_date, model: r.model, cost: parseFloat(r.cost), wallet: r.wallet_type, currency: r.currency });
+          });
+        } else if (name.startsWith('amount-')) {
+          parsed.forEach(r => {
+            if (r.utc_date && r.model && r.type) amountData.push({ date: r.utc_date, model: r.model, key: r.api_key_name || '(unknown)', keyPartial: r.api_key || '', type: r.type, price: parseFloat(r.price) || 0, amount: parseInt(r.amount) || 0 });
+          });
+        }
+      }
+      loadedFiles.push(file.name);
+      totalCsvFiles += csvFiles.length;
+    }
+    if (!loadedFiles.length) { document.getElementById('spinner').style.display = 'none'; return; }
+    document.getElementById('spinner').style.display = 'none';
+    updateDropzoneDisplay();
+    renderAll();
+  } catch(e) {
+    document.getElementById('spinner').style.display = 'none';
+    alert('Ошибка при обработке архива: ' + e.message);
+  }
+}
+
+function updateDropzoneDisplay() {
+  dz.classList.add('loaded');
+  const totalCsv = costData.length + amountData.length > 0 ? '✓' : '';
+  const costDays = new Set(costData.map(r => r.date)).size;
+  const amountDays = new Set(amountData.map(r => r.date)).size;
+  dz.innerHTML = `
+    <span class="icon">&#128451;</span>
+    <div class="info">
+      <div class="fname">${loadedFiles.length} архив(ов) загружено</div>
+      <div class="fdetail">${loadedFiles.join(', ')} &middot; данных за ${Math.max(costDays, amountDays)} дней</div>
+    </div>
+    <button onclick="addMoreArchives()" style="margin-left:auto;background:var(--surface2);border:1px solid var(--border);color:var(--text2);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;">+ Добавить</button>
+    <button onclick="resetDropzone()" style="background:transparent;border:none;color:var(--text2);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:14px;">&#x2716;</button>
+  `;
+}
+
+function addMoreArchives() {
+  document.getElementById('fileInput').click();
+}
+
+function resetDropzone() {
+  if(document.getElementById('spinner')) document.getElementById('spinner').style.display = 'none';
+  costData = []; amountData = []; loadedFiles = [];
+  destroyAllCharts();
+  document.getElementById('summary').style.display = 'none';
+  document.getElementById('tabs').style.display = 'none';
+  document.getElementById('tokenDetail').style.display = 'none';
+  dz.classList.remove('loaded');
+  dz.innerHTML = `<div class="icon">&#128230;</div><div class="title">Выберите архивы или перетащите их сюда</div><div class="hint">ZIP-архивы с CSV (cost-*.csv, amount-*.csv) — можно несколько сразу</div><input type="file" id="fileInput" accept=".zip" multiple>`;
+  document.getElementById('fileInput').addEventListener('change', e => {
+    if(e.target.files.length) handleFiles(e.target.files);
+  });
+}
+
+function destroyAllCharts() {
+  Object.values(charts).forEach(c => { try { c.destroy(); } catch(e) {} });
+  charts = {};
+}
+
+// === Render ===
+function renderAll() {
+  document.getElementById('summary').style.display = '';
+  document.getElementById('tabs').style.display = '';
+  renderSummary();
+  renderCostTables();
+  renderUsageTables();
+  renderCharts();
+  renderTokenSection();
+  setupTabs();
+}
+
+function fmt(n) { return Number(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 6 }); }
+function fmtInt(n) { return Number(n).toLocaleString('ru-RU'); }
+function fmtUsd(n) { return Number(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 4 }); }
+
+// === Summary ===
+function renderSummary() {
+  const totalCost = costData.reduce((s, r) => s + r.cost, 0);
+  const totalReqs = amountData.filter(r => r.type === 'request_count').reduce((s, r) => s + r.amount, 0);
+  const totalOut = amountData.filter(r => r.type === 'output_tokens').reduce((s, r) => s + r.amount, 0);
+  const totalIn = amountData.filter(r => r.type === 'input_cache_miss_tokens' || r.type === 'input_cache_hit_tokens').reduce((s, r) => s + r.amount, 0);
+  const days = new Set(costData.map(r => r.date)).size;
+  const keys = new Set(amountData.map(r => r.key)).size;
+  document.getElementById('summary').innerHTML = `
+    <div class="card"><div class="label">Всего затрат</div><div class="value green">${totalCost.toFixed(2)} USD</div></div>
+    <div class="card"><div class="label">Запросов</div><div class="value cyan">${fmtInt(totalReqs)}</div></div>
+    <div class="card"><div class="label">Выходные токены</div><div class="value orange">${fmtInt(totalOut)}</div></div>
+    <div class="card"><div class="label">Входные токены</div><div class="value pink">${fmtInt(totalIn)}</div></div>
+    <div class="card"><div class="label">Токенов (API-ключей)</div><div class="value yellow">${keys}</div></div>
+    <div class="card"><div class="label">Дней</div><div class="value">${days}</div></div>
+  `;
+}
+
+// === Cost tables ===
+function renderCostTables() {
+  const byDay = {};
+  costData.forEach(r => {
+    if(!byDay[r.date]) byDay[r.date] = {};
+    byDay[r.date][r.model] = (byDay[r.date][r.model] || 0) + r.cost;
+  });
+  const dates = Object.keys(byDay).sort();
+  const models = [...new Set(costData.map(r => r.model))];
+  let html = '<tr><th>Дата</th>';
+  models.forEach(m => { html += `<th>${MODEL_LABELS[m] || m}</th>`; });
+  html += '<th>Итого</th></tr>';
+  dates.forEach(d => {
+    html += `<tr><td>${d}</td>`;
+    let total = 0;
+    models.forEach(m => {
+      const v = byDay[d][m] || 0;
+      total += v;
+      html += `<td class="num">${fmt(v)}</td>`;
+    });
+    html += `<td class="num"><strong>${fmt(total)}</strong></td></tr>`;
+  });
+  document.querySelector('#costTable tbody').innerHTML = html;
+
+  const byModel = {};
+  costData.forEach(r => { byModel[r.model] = (byModel[r.model] || 0) + r.cost; });
+  let h2 = '<tr><th>Модель</th><th>Затраты (USD)</th><th>Доля</th></tr>';
+  const totalAll = Object.values(byModel).reduce((a,b) => a+b, 0);
+  Object.entries(byModel).sort((a,b) => b[1]-a[1]).forEach(([m, v]) => {
+    h2 += `<tr><td><span class="${MODEL_CLS[m] || 'badge'}">${MODEL_LABELS[m] || m}</span></td><td class="num">${fmt(v)}</td><td class="num">${(v/totalAll*100).toFixed(1)}%</td></tr>`;
+  });
+  h2 += `<tr><td><strong>Итого</strong></td><td class="num"><strong>${fmt(totalAll)}</strong></td><td></td></tr>`;
+  document.querySelector('#costModelTable tbody').innerHTML = h2;
+}
+
+// === Usage tables ===
+function renderUsageTables() {
+  const byDay = {};
+  amountData.forEach(r => {
+    if(!byDay[r.date]) byDay[r.date] = { req: 0, out: 0, inHit: 0, inMiss: 0 };
+    if(r.type === 'request_count') byDay[r.date].req += r.amount;
+    else if(r.type === 'output_tokens') byDay[r.date].out += r.amount;
+    else if(r.type === 'input_cache_hit_tokens') byDay[r.date].inHit += r.amount;
+    else if(r.type === 'input_cache_miss_tokens') byDay[r.date].inMiss += r.amount;
+  });
+  const dates = Object.keys(byDay).sort();
+  let html = '<tr><th>Дата</th><th>Запросы</th><th>Вых. токены</th><th>Cache Hit</th><th>Cache Miss</th><th>Cache Hit %</th><th>Всего токенов</th></tr>';
+  dates.forEach(d => {
+    const r = byDay[d];
+    const totalIn = r.inHit + r.inMiss;
+    const cachePct = totalIn > 0 ? (r.inHit / totalIn * 100).toFixed(1) : '—';
+    html += `<tr><td>${d}</td><td class="num">${fmtInt(r.req)}</td><td class="num">${fmtInt(r.out)}</td><td class="num">${fmtInt(r.inHit)}</td><td class="num">${fmtInt(r.inMiss)}</td><td class="num">${cachePct}%</td><td class="num">${fmtInt(r.out + totalIn)}</td></tr>`;
+  });
+  document.querySelector('#usageTable tbody').innerHTML = html;
+
+  const byType = {};
+  amountData.forEach(r => {
+    if(!byType[r.type]) byType[r.type] = 0;
+    byType[r.type] += r.amount;
+  });
+  let h2 = '<tr><th>Тип</th><th>Количество</th></tr>';
+  [['request_count','Запросы'], ['output_tokens','Выходные токены'], ['input_cache_hit_tokens','Cache Hit (токены)'], ['input_cache_miss_tokens','Cache Miss (токены)']].forEach(([k, l]) => {
+    h2 += `<tr><td>${l}</td><td class="num">${fmtInt(byType[k] || 0)}</td></tr>`;
+  });
+  document.querySelector('#usageTypeTable tbody').innerHTML = h2;
+}
+
+// === Charts ===
+function renderCharts() {
+  destroyAllCharts();
+
+  // 1. Cost by day (stacked bar)
+  const byDay = {};
+  const allModels = [...new Set(costData.map(r => r.model))].sort();
+  costData.forEach(r => {
+    if(!byDay[r.date]) byDay[r.date] = {};
+    byDay[r.date][r.model] = (byDay[r.date][r.model] || 0) + r.cost;
+  });
+  const dates = Object.keys(byDay).sort();
+  makeChart('chartCostDay', 'bar', {
+    labels: dates,
+    datasets: allModels.map(m => ({
+      label: MODEL_LABELS[m] || m,
+      data: dates.map(d => byDay[d][m] || 0),
+      backgroundColor: COLORS[m] || '#888',
+      borderRadius: 3,
+    }))
+  }, { stacked: true, plugins: { legend: { position: 'top' } } });
+
+  // 2. Cost by model (doughnut)
+  const byModel = {};
+  costData.forEach(r => { byModel[r.model] = (byModel[r.model] || 0) + r.cost; });
+  const modelEntries = Object.entries(byModel).sort((a,b) => b[1]-a[1]);
+  makeChart('chartCostModel', 'doughnut', {
+    labels: modelEntries.map(([m]) => MODEL_LABELS[m] || m),
+    datasets: [{ data: modelEntries.map(([,v]) => v), backgroundColor: modelEntries.map(([m]) => COLORS[m] || '#888'), borderWidth: 0 }]
+  }, { plugins: { legend: { position: 'right' } } });
+
+  // 3. Request count by day
+  const reqByDay = {};
+  amountData.filter(r => r.type === 'request_count').forEach(r => {
+    reqByDay[r.date] = (reqByDay[r.date] || 0) + r.amount;
+  });
+  const reqDates = Object.keys(reqByDay).sort();
+  makeChart('chartRequests', 'bar', {
+    labels: reqDates,
+    datasets: [{ label: 'Запросы', data: reqDates.map(d => reqByDay[d]), backgroundColor: 'rgba(108,140,255,0.7)', borderRadius: 3 }]
+  }, {});
+
+  // 4. Tokens by day
+  const tokByDay = {};
+  amountData.forEach(r => {
+    if(!tokByDay[r.date]) tokByDay[r.date] = { output_tokens: 0, input_cache_hit_tokens: 0, input_cache_miss_tokens: 0 };
+    if(tokByDay[r.date][r.type] !== undefined) tokByDay[r.date][r.type] += r.amount;
+  });
+  const tokDates = Object.keys(tokByDay).sort();
+  makeChart('chartTokens', 'bar', {
+    labels: tokDates,
+    datasets: [
+      { label: 'Выходные', data: tokDates.map(d => tokByDay[d].output_tokens), backgroundColor: '#fb923c', borderRadius: 3 },
+      { label: 'Cache Hit', data: tokDates.map(d => tokByDay[d].input_cache_hit_tokens), backgroundColor: '#4ade80', borderRadius: 3 },
+      { label: 'Cache Miss', data: tokDates.map(d => tokByDay[d].input_cache_miss_tokens), backgroundColor: '#f87171', borderRadius: 3 },
+    ]
+  }, { stacked: true });
+
+  // 5. Cache hit ratio
+  const cacheByDay = {};
+  amountData.forEach(r => {
+    if(r.type === 'input_cache_hit_tokens' || r.type === 'input_cache_miss_tokens') {
+      if(!cacheByDay[r.date]) cacheByDay[r.date] = { hit: 0, miss: 0 };
+      if(r.type === 'input_cache_hit_tokens') cacheByDay[r.date].hit += r.amount;
+      else cacheByDay[r.date].miss += r.amount;
+    }
+  });
+  const cacheDates = Object.keys(cacheByDay).sort();
+  const cachePcts = cacheDates.map(d => {
+    const t = cacheByDay[d].hit + cacheByDay[d].miss;
+    return t > 0 ? (cacheByDay[d].hit / t * 100) : 0;
+  });
+  makeChart('chartCache', 'line', {
+    labels: cacheDates,
+    datasets: [{
+      label: 'Cache Hit %', data: cachePcts, borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,0.1)',
+      fill: true, tension: 0.3, pointRadius: 4
+    }]
+  }, { scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } } });
+
+  // 6. Tokens by model
+  const tmByModel = {};
+  amountData.forEach(r => {
+    if(r.type === 'output_tokens' || r.type === 'input_cache_hit_tokens' || r.type === 'input_cache_miss_tokens') {
+      if(!tmByModel[r.model]) tmByModel[r.model] = { output_tokens: 0, input_cache_hit_tokens: 0, input_cache_miss_tokens: 0 };
+      tmByModel[r.model][r.type] += r.amount;
+    }
+  });
+  const tm = Object.keys(tmByModel).sort();
+  makeChart('chartTokensModel', 'bar', {
+    labels: tm.map(m => MODEL_LABELS[m] || m),
+    datasets: [
+      { label: 'Выходные', data: tm.map(m => tmByModel[m].output_tokens), backgroundColor: '#fb923c', borderRadius: 3 },
+      { label: 'Cache Hit', data: tm.map(m => tmByModel[m].input_cache_hit_tokens), backgroundColor: '#4ade80', borderRadius: 3 },
+      { label: 'Cache Miss', data: tm.map(m => tmByModel[m].input_cache_miss_tokens), backgroundColor: '#f87171', borderRadius: 3 },
+    ]
+  }, { indexAxis: 'y', stacked: true });
+}
+
+// === Token Section (API Keys) ===
+let tokenKeys = []; // sorted unique key names
+let tokenKeyPartial = {}; // key name -> partial key string
+
+function getTokenCost(keyName) {
+  // Calculate cost from amount data using price * amount
+  const records = amountData.filter(r => r.key === keyName);
+  let cost = 0;
+  records.forEach(r => {
+    if (r.type !== 'request_count' && r.price > 0) {
+      cost += r.price * r.amount;
+    }
+  });
+  return cost;
+}
+
+function renderTokenSection() {
+  // Collect unique keys
+  const keySet = new Set();
+  tokenKeyPartial = {};
+  amountData.forEach(r => {
+    keySet.add(r.key);
+    if (r.keyPartial && !tokenKeyPartial[r.key]) {
+      tokenKeyPartial[r.key] = r.keyPartial;
+    }
+  });
+  tokenKeys = [...keySet].sort();
+
+  // Populate selector
+  const sel = document.getElementById('tokenSelect');
+  sel.innerHTML = '<option value="__all__">— Все токены —</option>';
+  tokenKeys.forEach((k, i) => {
+    const opt = document.createElement('option');
+    opt.value = k;
+    opt.textContent = k;
+    sel.appendChild(opt);
+  });
+
+  // Render summary table
+  renderTokenSummaryTable();
+
+  // If there was a previously selected token, try to restore it
+  const selected = sel.value;
+  if (selected !== '__all__' && tokenKeys.includes(selected)) {
+    renderTokenDetail(selected);
+  }
+}
+
+function renderTokenSummaryTable() {
+  const keyStats = tokenKeys.map(k => {
+    const records = amountData.filter(r => r.key === k);
+    const reqs = records.filter(r => r.type === 'request_count').reduce((s, r) => s + r.amount, 0);
+    const out = records.filter(r => r.type === 'output_tokens').reduce((s, r) => s + r.amount, 0);
+    const hit = records.filter(r => r.type === 'input_cache_hit_tokens').reduce((s, r) => s + r.amount, 0);
+    const miss = records.filter(r => r.type === 'input_cache_miss_tokens').reduce((s, r) => s + r.amount, 0);
+    const models = [...new Set(records.map(r => r.model))];
+    let cost = 0;
+    records.forEach(r => { if (r.type !== 'request_count' && r.price > 0) cost += r.price * r.amount; });
+    const cacheTotal = hit + miss;
+    const cachePct = cacheTotal > 0 ? (hit / cacheTotal * 100).toFixed(1) : '—';
+    return { key: k, cost, reqs, out, hit, miss, cachePct, models, partial: tokenKeyPartial[k] || '' };
+  });
+
+  keyStats.sort((a, b) => b.cost - a.cost);
+
+  let html = `<tr><th>Токен</th><th>API Key</th><th>Затраты (USD)</th><th>Запросы</th><th>Вых. токены</th><th>Cache Hit</th><th>Cache Miss</th><th>Cache %</th><th>Модели</th><th></th></tr>`;
+  keyStats.forEach((s, i) => {
+    const color = TOKEN_COLORS[i % TOKEN_COLORS.length];
+    const modelsHtml = s.models.map(m => `<span class="${MODEL_CLS[m] || 'badge'}">${MODEL_LABELS[m] || m}</span>`).join(' ');
+    const keyShort = s.partial ? s.partial.substring(0, 20) + '…' : '—';
+    html += `<tr>
+      <td><span class="badge key-badge" style="background:${color}22;color:${color}">●</span> ${s.key}</td>
+      <td style="font-family:monospace;font-size:11px;color:var(--text2)">${keyShort}</td>
+      <td class="num">${fmtUsd(s.cost)}</td>
+      <td class="num">${fmtInt(s.reqs)}</td>
+      <td class="num">${fmtInt(s.out)}</td>
+      <td class="num">${fmtInt(s.hit)}</td>
+      <td class="num">${fmtInt(s.miss)}</td>
+      <td class="num">${s.cachePct}%</td>
+      <td>${modelsHtml}</td>
+      <td><button onclick="selectToken('${s.key.replace(/'/g, "\\'")}')" style="background:var(--accent);border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:11px;">Детально</button></td>
+    </tr>`;
+  });
+  document.querySelector('#tokenSummaryTable tbody').innerHTML = html;
+}
+
+function selectToken(key) {
+  document.getElementById('tokenSelect').value = key;
+  onTokenChange();
+  // Switch to tokens tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-tab="tokens"]').classList.add('active');
+  document.getElementById('tab-tokens').classList.add('active');
+}
+
+function onTokenChange() {
+  const val = document.getElementById('tokenSelect').value;
+  if (val === '__all__') {
+    document.getElementById('tokenDetail').style.display = 'none';
+    return;
+  }
+  renderTokenDetail(val);
+}
+
+function renderTokenDetail(keyName) {
+  const detail = document.getElementById('tokenDetail');
+  detail.style.display = 'block';
+
+  const records = amountData.filter(r => r.key === keyName);
+  if (!records.length) { detail.style.display = 'none'; return; }
+
+  // Collect key info
+  const partial = tokenKeyPartial[keyName] || '';
+  const usedModels = [...new Set(records.map(r => r.model))];
+  const dates = [...new Set(records.map(r => r.date))].sort();
+
+  // Header
+  document.getElementById('keyHeader').innerHTML = `
+    <div class="key-name">&#128273; ${keyName}</div>
+    <div class="key-partial">${partial ? partial.substring(0, 30) + '…' : ''}</div>
+    <div class="key-models">${usedModels.map(m => `<span class="${MODEL_CLS[m] || 'badge'}">${MODEL_LABELS[m] || m}</span>`).join('')}</div>
+  `;
+
+  // Info cards
+  const totalReqs = records.filter(r => r.type === 'request_count').reduce((s, r) => s + r.amount, 0);
+  const totalOut = records.filter(r => r.type === 'output_tokens').reduce((s, r) => s + r.amount, 0);
+  const totalHit = records.filter(r => r.type === 'input_cache_hit_tokens').reduce((s, r) => s + r.amount, 0);
+  const totalMiss = records.filter(r => r.type === 'input_cache_miss_tokens').reduce((s, r) => s + r.amount, 0);
+  let totalCost = 0;
+  records.forEach(r => { if (r.type !== 'request_count' && r.price > 0) totalCost += r.price * r.amount; });
+  const cacheTotal = totalHit + totalMiss;
+  const cachePct = cacheTotal > 0 ? (totalHit / cacheTotal * 100).toFixed(1) : '—';
+  document.getElementById('tokenInfoCards').innerHTML = `
+    <div class="card"><div class="label">Затраты</div><div class="value green">${fmtUsd(totalCost)} USD</div></div>
+    <div class="card"><div class="label">Запросы</div><div class="value cyan">${fmtInt(totalReqs)}</div></div>
+    <div class="card"><div class="label">Вых. токены</div><div class="value orange">${fmtInt(totalOut)}</div></div>
+    <div class="card"><div class="label">Cache Hit</div><div class="value pink">${fmtInt(totalHit)}</div></div>
+    <div class="card"><div class="label">Cache Miss</div><div class="value red" style="color:var(--red)">${fmtInt(totalMiss)}</div></div>
+    <div class="card"><div class="label">Cache Hit %</div><div class="value" style="color:var(--green)">${cachePct}%</div></div>
+  `;
+
+  // Cost by day table (calculated from amount * price)
+  const costByDay = {};
+  records.forEach(r => {
+    if (r.type !== 'request_count' && r.price > 0) {
+      costByDay[r.date] = (costByDay[r.date] || 0) + r.price * r.amount;
+    }
+  });
+  let costHtml = '<tr><th>Дата</th>';
+  usedModels.forEach(m => { costHtml += `<th>${MODEL_LABELS[m] || m}</th>`; });
+  costHtml += '<th>Итого</th></tr>';
+  dates.forEach(d => {
+    costHtml += `<tr><td>${d}</td>`;
+    let dayTotal = 0;
+    usedModels.forEach(m => {
+      const v = records.filter(r => r.date === d && r.model === m && r.type !== 'request_count' && r.price > 0)
+        .reduce((s, r) => s + r.price * r.amount, 0);
+      dayTotal += v;
+      costHtml += `<td class="num">${v > 0 ? fmt(v) : '—'}</td>`;
+    });
+    costHtml += `<td class="num"><strong>${fmt(dayTotal)}</strong></td></tr>`;
+  });
+  document.querySelector('#tokenCostTable tbody').innerHTML = costHtml;
+
+  // Usage by day table
+  const usageByDay = {};
+  records.forEach(r => {
+    if (!usageByDay[r.date]) usageByDay[r.date] = { req: 0, out: 0, inHit: 0, inMiss: 0 };
+    if (r.type === 'request_count') usageByDay[r.date].req += r.amount;
+    else if (r.type === 'output_tokens') usageByDay[r.date].out += r.amount;
+    else if (r.type === 'input_cache_hit_tokens') usageByDay[r.date].inHit += r.amount;
+    else if (r.type === 'input_cache_miss_tokens') usageByDay[r.date].inMiss += r.amount;
+  });
+  let usgHtml = '<tr><th>Дата</th><th>Запросы</th><th>Вых. токены</th><th>Cache Hit</th><th>Cache Miss</th><th>Cache Hit %</th><th>Всего токенов</th></tr>';
+  dates.forEach(d => {
+    const r = usageByDay[d] || { req: 0, out: 0, inHit: 0, inMiss: 0 };
+    const ti = r.inHit + r.inMiss;
+    const cp = ti > 0 ? (r.inHit / ti * 100).toFixed(1) : '—';
+    usgHtml += `<tr><td>${d}</td><td class="num">${fmtInt(r.req)}</td><td class="num">${fmtInt(r.out)}</td><td class="num">${fmtInt(r.inHit)}</td><td class="num">${fmtInt(r.inMiss)}</td><td class="num">${cp}%</td><td class="num">${fmtInt(r.out + ti)}</td></tr>`;
+  });
+  document.querySelector('#tokenUsageTable tbody').innerHTML = usgHtml;
+
+  // Destroy old token charts
+  ['chartTokenCost', 'chartTokenTokens', 'chartTokenReqs', 'chartTokenCache'].forEach(id => {
+    if (charts[id]) { try { charts[id].destroy(); } catch(e) {} delete charts[id]; }
+  });
+
+  // Cost chart (by model stacked)
+  const costByDayModel = {};
+  records.forEach(r => {
+    if (r.type !== 'request_count' && r.price > 0) {
+      if (!costByDayModel[r.date]) costByDayModel[r.date] = {};
+      costByDayModel[r.date][r.model] = (costByDayModel[r.date][r.model] || 0) + r.price * r.amount;
+    }
+  });
+  makeChart('chartTokenCost', 'bar', {
+    labels: dates,
+    datasets: usedModels.map(m => ({
+      label: MODEL_LABELS[m] || m,
+      data: dates.map(d => (costByDayModel[d] && costByDayModel[d][m]) || 0),
+      backgroundColor: COLORS[m] || '#888',
+      borderRadius: 3,
+    }))
+  }, { stacked: true, plugins: { legend: { position: 'top' } } });
+
+  // Tokens chart (stacked)
+  makeChart('chartTokenTokens', 'bar', {
+    labels: dates,
+    datasets: [
+      { label: 'Выходные', data: dates.map(d => (usageByDay[d]?.out || 0)), backgroundColor: '#fb923c', borderRadius: 3 },
+      { label: 'Cache Hit', data: dates.map(d => (usageByDay[d]?.inHit || 0)), backgroundColor: '#4ade80', borderRadius: 3 },
+      { label: 'Cache Miss', data: dates.map(d => (usageByDay[d]?.inMiss || 0)), backgroundColor: '#f87171', borderRadius: 3 },
+    ]
+  }, { stacked: true });
+
+  // Requests chart
+  makeChart('chartTokenReqs', 'bar', {
+    labels: dates,
+    datasets: [{
+      label: 'Запросы',
+      data: dates.map(d => (usageByDay[d]?.req || 0)),
+      backgroundColor: 'rgba(108,140,255,0.7)',
+      borderRadius: 3,
+    }]
+  }, {});
+
+  // Cache ratio chart
+  const cachePcts = dates.map(d => {
+    const r = usageByDay[d];
+    if (!r) return 0;
+    const t = r.inHit + r.inMiss;
+    return t > 0 ? (r.inHit / t * 100) : 0;
+  });
+  makeChart('chartTokenCache', 'line', {
+    labels: dates,
+    datasets: [{
+      label: 'Cache Hit %', data: cachePcts, borderColor: '#4ade80',
+      backgroundColor: 'rgba(74,222,128,0.1)', fill: true, tension: 0.3, pointRadius: 4
+    }]
+  }, { scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } } });
+}
+
+// === Chart helper ===
+function makeChart(id, type, data, opts) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const ctx = el.getContext('2d');
+  charts[id] = new Chart(ctx, {
+    type,
+    data,
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#8b90a5', boxWidth: 12, padding: 12 } },
+        tooltip: { backgroundColor: '#1a1d28', borderColor: '#2d3248', borderWidth: 1, titleColor: '#e1e4ed', bodyColor: '#e1e4ed', cornerRadius: 6 }
+      },
+      scales: {
+        x: { ticks: { color: '#8b90a5', maxRotation: 45 }, grid: { color: 'rgba(45,50,72,0.4)' } },
+        y: { ticks: { color: '#8b90a5' }, grid: { color: 'rgba(45,50,72,0.4)' } }
+      },
+      ...opts
+    }
+  });
+}
+
+// === Tabs ===
+function setupTabs() {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+      setTimeout(() => {
+        Object.values(charts).forEach(c => c.resize());
+      }, 50);
+    });
+  });
+}
+</script>
+</body>
+</html>
