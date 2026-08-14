@@ -159,10 +159,56 @@
   .key-header .key-name { font-size: 18px; font-weight: 600; }
   .key-header .key-partial { font-size: 12px; color: var(--text2); font-family: monospace; }
   .key-header .key-models { display: flex; gap: 6px; margin-left: auto; }
+
+  /* Peak pricing banner */
+  .peak-banner {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 24px;
+  }
+  .peak-banner.off { border-left: 4px solid var(--green); }
+  .peak-banner.peak { border-left: 4px solid var(--orange); }
+  .peak-status { display: flex; align-items: center; gap: 10px; }
+  .peak-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .peak-banner.off .peak-dot { background: var(--green); box-shadow: 0 0 10px rgba(74,222,128,.55); }
+  .peak-banner.peak .peak-dot { background: var(--orange); box-shadow: 0 0 10px rgba(251,146,60,.55); }
+  .peak-title { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); font-weight: 600; }
+  .peak-now { font-size: 15px; font-weight: 600; }
+  .peak-banner.off .peak-now { color: var(--green); }
+  .peak-banner.peak .peak-now { color: var(--orange); }
+  .peak-block .peak-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); margin-bottom: 4px; font-weight: 600; }
+  .peak-value { font-size: 14px; font-weight: 600; }
+  .peak-value small { color: var(--text2); font-weight: 400; }
+  .peak-tz { font-weight: 400; text-transform: none; }
+  .peak-note { color: var(--text2); font-size: 12px; max-width: 280px; line-height: 1.4; }
+  @media (max-width: 760px) { .peak-banner { flex-direction: column; align-items: flex-start; gap: 10px; } .peak-note { max-width: none; } }
 </style>
 </head>
 <body>
 <div class="container">
+  <!-- Peak / off-peak pricing banner -->
+  <div class="peak-banner off" id="peakBanner">
+    <div class="peak-status">
+      <span class="peak-dot"></span>
+      <div>
+        <div class="peak-title">Тариф пик / не-пик</div>
+        <div class="peak-now" id="peakNow">—</div>
+      </div>
+    </div>
+    <div class="peak-block">
+      <div class="peak-label">Пиковые часы <span class="peak-tz" id="peakTz"></span></div>
+      <div class="peak-value" id="peakSchedule">—</div>
+    </div>
+    <div class="peak-block">
+      <div class="peak-label" id="peakNextLabel">Следующее пиковое время</div>
+      <div class="peak-value" id="peakNext">—</div>
+    </div>
+    <div class="peak-block peak-note" id="peakNote"></div>
+  </div>
+
   <header>
     <div>
       <h1><span>Usage</span> Dashboard</h1>
@@ -858,6 +904,76 @@ function setupTabs() {
     });
   });
 }
+
+// === Peak / off-peak pricing banner ===
+const PEAK_WINDOWS = [ { start: 60, end: 240 }, { start: 360, end: 600 } ]; // минут с начала суток UTC (01:00–04:00 и 06:00–10:00)
+const PEAK_EFFECTIVE_UTC = Date.UTC(2026, 7, 16, 16, 0, 0); // 16.08.2026 16:00 UTC
+
+function fmtHM(d) { return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); }
+function fmtCountdown(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return h + 'ч ' + m + 'м ' + s + 'с';
+  if (m > 0) return m + 'м ' + s + 'с';
+  return s + 'с';
+}
+
+function renderPeakBanner() {
+  const banner = document.getElementById('peakBanner');
+  if (!banner) return;
+  const now = new Date();
+
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  document.getElementById('peakTz').textContent = '(' + (tz || 'местное время') + ')';
+
+  // Пиковые окна в местных сутках клиента (корректно для часовых поясов, где окно переходит через полночь)
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const dayEnd = dayStart + 86400000;
+  const wins = [];
+  for (let off = -1; off <= 1; off++) {
+    const base = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) + off * 86400000;
+    PEAK_WINDOWS.forEach(w => {
+      const ws = Math.max(base + w.start * 60000, dayStart);
+      const we = Math.min(base + w.end * 60000, dayEnd);
+      if (ws < we) wins.push([ws, we]);
+    });
+  }
+  wins.sort((a, b) => a[0] - b[0]);
+  document.getElementById('peakSchedule').textContent = wins.map(([ws, we]) => fmtHM(new Date(ws)) + '–' + fmtHM(new Date(we))).join(', ');
+
+  // Текущий статус и ближайшее начало пика (вычисляем в UTC, без привязки к DST)
+  const sodUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const minutes = now.getUTCHours() * 60 + now.getUTCMinutes() + now.getUTCSeconds() / 60;
+  const inPeak = (minutes >= 60 && minutes < 240) || (minutes >= 360 && minutes < 600);
+  let nextStart;
+  if (minutes < 60) nextStart = sodUtc + 3600000;                    // до 01:00 → пик начнётся в 01:00
+  else if (minutes < 240) nextStart = sodUtc + 6 * 3600000;          // в пике 01–04 → следующий пик в 06:00
+  else if (minutes < 360) nextStart = sodUtc + 6 * 3600000;          // 04–06 → пик в 06:00
+  else if (minutes < 600) nextStart = sodUtc + 86400000 + 3600000;   // в пике 06–10 → следующий пик завтра в 01:00
+  else nextStart = sodUtc + 86400000 + 3600000;                      // после 10:00 → пик завтра в 01:00
+
+  document.getElementById('peakNow').textContent = inPeak
+    ? 'Пиковое время — действуют полные тарифы'
+    : 'Непиковое время — тарифы в 2 раза ниже';
+  document.getElementById('peakNextLabel').textContent = inPeak
+    ? 'Следующий пик (после текущего)'
+    : 'Следующее пиковое время';
+  document.getElementById('peakNext').innerHTML = 'через <b>' + fmtCountdown(nextStart - now.getTime()) + '</b> <small>(' + fmtHM(new Date(nextStart)) + ')</small>';
+
+  banner.classList.toggle('peak', inPeak);
+  banner.classList.toggle('off', !inPeak);
+
+  const note = document.getElementById('peakNote');
+  if (now.getTime() < PEAK_EFFECTIVE_UTC) {
+    note.textContent = 'Новые тарифы пик/не-пик вступают в силу 16.08.2026 в 16:00 UTC. Непиковое время — вдвое дешевле пикового.';
+  } else {
+    note.textContent = 'В непиковые часы тарифы вдвое ниже, чем в пиковые.';
+  }
+}
+renderPeakBanner();
+setInterval(renderPeakBanner, 1000);
 </script>
 </body>
 </html>
