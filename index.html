@@ -184,6 +184,8 @@
   .peak-value small { color: var(--text2); font-weight: 400; }
   .peak-tz { font-weight: 400; text-transform: none; }
   .peak-note { color: var(--text2); font-size: 12px; max-width: 280px; line-height: 1.4; }
+  .peak-link { color: var(--accent); text-decoration: none; font-weight: 600; border-bottom: 1px dashed rgba(108,140,255,.4); }
+  .peak-link:hover { color: var(--cyan); border-bottom-color: currentColor; }
   @media (max-width: 760px) { .peak-banner { flex-direction: column; align-items: flex-start; gap: 10px; } .peak-note { max-width: none; } }
 </style>
 </head>
@@ -206,7 +208,10 @@
       <div class="peak-label" id="peakNextLabel">Следующее пиковое время</div>
       <div class="peak-value" id="peakNext">—</div>
     </div>
-    <div class="peak-block peak-note" id="peakNote"></div>
+    <div class="peak-block peak-note">
+      <div id="peakNote"></div>
+      <a class="peak-link" href="https://api-docs.deepseek.com/quick_start/pricing/" target="_blank" rel="noopener noreferrer">Актуальные тарифы &#8599;</a>
+    </div>
   </div>
 
   <header>
@@ -943,24 +948,25 @@ function renderPeakBanner() {
   wins.sort((a, b) => a[0] - b[0]);
   document.getElementById('peakSchedule').textContent = wins.map(([ws, we]) => fmtHM(new Date(ws)) + '–' + fmtHM(new Date(we))).join(', ');
 
-  // Текущий статус и ближайшее начало пика (вычисляем в UTC, без привязки к DST)
+  // Текущий статус и ближайший переход фазы (вычисляем в UTC, без привязки к DST)
   const sodUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const minutes = now.getUTCHours() * 60 + now.getUTCMinutes() + now.getUTCSeconds() / 60;
   const inPeak = (minutes >= 60 && minutes < 240) || (minutes >= 360 && minutes < 600);
-  let nextStart;
-  if (minutes < 60) nextStart = sodUtc + 3600000;                    // до 01:00 → пик начнётся в 01:00
-  else if (minutes < 240) nextStart = sodUtc + 6 * 3600000;          // в пике 01–04 → следующий пик в 06:00
-  else if (minutes < 360) nextStart = sodUtc + 6 * 3600000;          // 04–06 → пик в 06:00
-  else if (minutes < 600) nextStart = sodUtc + 86400000 + 3600000;   // в пике 06–10 → следующий пик завтра в 01:00
-  else nextStart = sodUtc + 86400000 + 3600000;                      // после 10:00 → пик завтра в 01:00
+  let nextTransition;    // момент ближайшего перехода фазы
+  let nextIsPeakStart;   // true → следующий переход = начало пика, false → конец пика
+  if (minutes < 60)        { nextTransition = sodUtc + 3600000;            nextIsPeakStart = true;  } // непик → пик начнётся в 01:00
+  else if (minutes < 240)  { nextTransition = sodUtc + 4 * 3600000;        nextIsPeakStart = false; } // пик 01–04 → закончится в 04:00
+  else if (minutes < 360)  { nextTransition = sodUtc + 6 * 3600000;        nextIsPeakStart = true;  } // непик → пик начнётся в 06:00
+  else if (minutes < 600)  { nextTransition = sodUtc + 10 * 3600000;       nextIsPeakStart = false; } // пик 06–10 → закончится в 10:00
+  else                     { nextTransition = sodUtc + 86400000 + 3600000; nextIsPeakStart = true;  } // непик → пик начнётся завтра в 01:00
 
   document.getElementById('peakNow').textContent = inPeak
     ? 'Пиковое время — действуют полные тарифы'
     : 'Непиковое время — тарифы в 2 раза ниже';
-  document.getElementById('peakNextLabel').textContent = inPeak
-    ? 'Следующий пик (после текущего)'
-    : 'Следующее пиковое время';
-  document.getElementById('peakNext').innerHTML = 'через <b>' + fmtCountdown(nextStart - now.getTime()) + '</b> <small>(' + fmtHM(new Date(nextStart)) + ')</small>';
+  document.getElementById('peakNextLabel').textContent = nextIsPeakStart
+    ? 'Следующий пик начнётся'
+    : 'Пик закончится';
+  document.getElementById('peakNext').innerHTML = 'через <b>' + fmtCountdown(nextTransition - now.getTime()) + '</b> <small>(' + fmtHM(new Date(nextTransition)) + ')</small>';
 
   banner.classList.toggle('peak', inPeak);
   banner.classList.toggle('off', !inPeak);
