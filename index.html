@@ -179,6 +179,8 @@
   .peak-now { font-size: 15px; font-weight: 600; }
   .peak-banner.off .peak-now { color: var(--green); }
   .peak-banner.peak .peak-now { color: var(--orange); }
+  .peak-banner.off #peakNext { color: var(--green); }
+  .peak-banner.peak #peakNext { color: var(--red); }
   .peak-block .peak-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); margin-bottom: 4px; font-weight: 600; }
   .peak-value { font-size: 14px; font-weight: 600; }
   .peak-value small { color: var(--text2); font-weight: 400; }
@@ -186,7 +188,23 @@
   .peak-note { color: var(--text2); font-size: 12px; max-width: 280px; line-height: 1.4; }
   .peak-link { color: var(--accent); text-decoration: none; font-weight: 600; border-bottom: 1px dashed rgba(108,140,255,.4); }
   .peak-link:hover { color: var(--cyan); border-bottom-color: currentColor; }
-  @media (max-width: 760px) { .peak-banner { flex-direction: column; align-items: flex-start; gap: 10px; } .peak-note { max-width: none; } }
+  .peak-notify-btn {
+    margin-left: auto;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: all .15s;
+  }
+  .peak-notify-btn:hover { color: var(--text); border-color: var(--accent); }
+  .peak-notify-btn.on { background: rgba(74,222,128,.12); color: var(--green); border-color: var(--green); }
+  .peak-notify-btn.blocked { opacity: .6; cursor: not-allowed; }
+  @media (max-width: 760px) { .peak-banner { flex-direction: column; align-items: flex-start; gap: 10px; } .peak-note { max-width: none; } .peak-notify-btn { margin-left: 0; } }
 </style>
 </head>
 <body>
@@ -212,6 +230,7 @@
       <div id="peakNote"></div>
       <a class="peak-link" href="https://api-docs.deepseek.com/quick_start/pricing/" target="_blank" rel="noopener noreferrer">Актуальные тарифы &#8599;</a>
     </div>
+    <button class="peak-notify-btn" id="peakNotifyBtn" onclick="togglePeakNotify()">&#128276; Уведомить о пике</button>
   </div>
 
   <header>
@@ -977,7 +996,89 @@ function renderPeakBanner() {
   } else {
     note.textContent = 'В непиковые часы тарифы вдвое ниже, чем в пиковые.';
   }
+
+  checkPeakNotify(now);
 }
+
+// === Уведомления о скором начале пика (за 5 минут) ===
+const PEAK_NOTIFY_LEAD_MS = 5 * 60 * 1000;
+let peakNotifKey = null; // 'дата#окно', для которого уже отправили уведомление
+
+function notifSupported() { return 'Notification' in window; }
+function storeGet(k) { try { return localStorage.getItem(k); } catch(e) { return null; } }
+function storeSet(k, v) { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch(e) {} }
+function peakNotifyEnabled() { return storeGet('peakNotify') === '1'; }
+
+function setPeakNotifyEnabled(on) {
+  storeSet('peakNotify', on ? '1' : '');
+  updatePeakNotifyBtn();
+}
+
+function updatePeakNotifyBtn() {
+  const btn = document.getElementById('peakNotifyBtn');
+  if (!btn) return;
+  if (!notifSupported()) { btn.style.display = 'none'; return; }
+  const perm = Notification.permission;
+  if (perm === 'denied') {
+    btn.classList.remove('on'); btn.classList.add('blocked');
+    btn.innerHTML = '&#128276; Уведомления заблокированы';
+    btn.title = 'Разрешите уведомления для этого сайта в настройках браузера';
+  } else if (peakNotifyEnabled() && perm === 'granted') {
+    btn.classList.add('on'); btn.classList.remove('blocked');
+    btn.innerHTML = '&#128276; Уведомления вкл.';
+    btn.title = 'Выключить уведомления';
+  } else {
+    btn.classList.remove('on', 'blocked');
+    btn.innerHTML = '&#128276; Уведомить о пике';
+    btn.title = 'Присылать уведомление за 5 минут до начала пикового времени';
+  }
+}
+
+function togglePeakNotify() {
+  if (!notifSupported()) { alert('Ваш браузер не поддерживает уведомления'); return; }
+  const perm = Notification.permission;
+  if (perm === 'granted') { setPeakNotifyEnabled(!peakNotifyEnabled()); return; }
+  if (perm === 'denied') {
+    alert('Уведомления заблокированы браузером. Разрешите их для этого сайта в настройках.');
+    return;
+  }
+  // 'default' — запрашиваем разрешение (нужен клик пользователя)
+  Notification.requestPermission().then(p => {
+    if (p === 'granted') setPeakNotifyEnabled(true);
+  });
+}
+
+function nextPeakStart(now) {
+  const sodUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const minutes = now.getUTCHours() * 60 + now.getUTCMinutes() + now.getUTCSeconds() / 60;
+  let startMs, win;
+  if (minutes < 360) {
+    if (minutes < 60) { startMs = sodUtc + 3600000; win = '1'; }        // пик начнётся в 01:00
+    else { startMs = sodUtc + 6 * 3600000; win = '2'; }                 // пик начнётся в 06:00
+  } else {
+    startMs = sodUtc + 86400000 + 3600000; win = '1';                   // пик начнётся завтра в 01:00
+  }
+  return { startMs, win };
+}
+
+function checkPeakNotify(now) {
+  if (!peakNotifyEnabled() || !notifSupported() || Notification.permission !== 'granted') return;
+  const { startMs, win } = nextPeakStart(now);
+  const key = new Date(startMs).toISOString().slice(0, 10) + '#' + win;
+  const t = now.getTime();
+  if (t >= startMs - PEAK_NOTIFY_LEAD_MS && t < startMs && key !== peakNotifKey) {
+    peakNotifKey = key;
+    try {
+      new Notification('DeepSeek — скоро пиковое время', {
+        body: 'Пик начнётся в ' + fmtHM(new Date(startMs)) + '. До этого действует непиковый тариф.',
+        tag: 'peak-' + key,
+        silent: false
+      });
+    } catch (e) {}
+  }
+}
+
+updatePeakNotifyBtn();
 renderPeakBanner();
 setInterval(renderPeakBanner, 1000);
 </script>
