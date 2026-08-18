@@ -273,6 +273,10 @@
         <h3>Затраты по моделям</h3>
         <div class="table-wrap"><table id="costModelTable"><tbody></tbody></table></div>
       </div>
+      <div class="panel grid-full">
+        <h3>Расходы по времени: пик / не-пик</h3>
+        <div id="peakSplit"></div>
+      </div>
     </div>
   </div>
 
@@ -360,11 +364,35 @@ const TOKEN_COLORS = ['#facc15', '#f472b6', '#22d3ee', '#fb923c', '#a78bfa', '#3
 
 // === Drop Zone ===
 const dz = document.getElementById('dropzone');
-dz.addEventListener('click', () => { const inp = document.getElementById('fileInput'); if(inp) inp.click(); });
+// Гарантирует наличие скрытого <input type="file"> и обработчика выбора.
+// После перерисовки dropzone (dz.innerHTML = ...) элемент пропадает из DOM,
+// поэтому пересоздаём его при необходимости (скрывается через `#dropzone input`).
+function ensureFileInput() {
+  let inp = document.getElementById('fileInput');
+  if (!inp) {
+    inp = document.createElement('input');
+    inp.type = 'file';
+    inp.id = 'fileInput';
+    inp.accept = '.zip';
+    inp.multiple = true;
+    dz.appendChild(inp);
+  }
+  // Обработчик выбора вешаем всегда: у <input> из разметки (при загрузке страницы)
+  // его ещё нет, поэтому без этого условия выбор файла игнорировался.
+  if (!inp._bound) {
+    inp._bound = true;
+    inp.addEventListener('change', e => {
+      if (e.target.files.length) handleFiles(e.target.files);
+      inp.value = ''; // позволяем повторно выбрать тот же файл
+    });
+  }
+  return inp;
+}
+dz.addEventListener('click', () => { ensureFileInput().click(); });
 dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
 dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
 dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('dragover'); if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
-document.getElementById('fileInput').addEventListener('change', e => { if(e.target.files.length) handleFiles(e.target.files); });
+ensureFileInput();
 
 // === Main handler (multiple files) ===
 async function handleFiles(fileList) {
@@ -384,19 +412,44 @@ async function handleFiles(fileList) {
       for (const name of csvFiles) {
         const text = await zip.files[name].async('string');
         const parsed = Papa.parse(text, { header: true, skipEmptyLines: true }).data;
+        // Нормализация даты и уровня детализации:
+        // utc_date (старый формат) — день без времени;
+        // start_time_iso/end_time_iso (новый) — окно < 24ч считается детальным логом,
+        // окно в 24ч и более — дневная агрегация (её отбросим, если есть детальный лог).
+        // Для детального лога запоминаем час начала (UTC) — по нему считается пик/не-пик.
+        const norm = r => {
+          const date = (r.utc_date || (r.start_time_iso ? r.start_time_iso.slice(0, 10) : '')).trim();
+          let fine = false, hour;
+          if (!r.utc_date && r.start_time_iso && r.end_time_iso) {
+            const hours = (new Date(r.end_time_iso) - new Date(r.start_time_iso)) / 3600000;
+            if (hours > 0 && hours < 24) { fine = true; hour = new Date(r.start_time_iso).getUTCHours(); }
+          }
+          return { date, fine, hour };
+        };
         if (name.startsWith('cost-')) {
           parsed.forEach(r => {
-            if (r.utc_date && r.model && r.cost) costData.push({ date: r.utc_date, model: r.model, cost: parseFloat(r.cost), wallet: r.wallet_type, currency: r.currency });
+            const { date, fine, hour } = norm(r);
+            if (date && r.model && r.cost) costData.push({ date, model: r.model, cost: parseFloat(r.cost), wallet: r.wallet_type, currency: r.currency, hour, _fine: fine, _key: date + '|' + r.model + '|' + (r.wallet_type || '') });
           });
         } else if (name.startsWith('amount-')) {
           parsed.forEach(r => {
-            if (r.utc_date && r.model && r.type) amountData.push({ date: r.utc_date, model: r.model, key: r.api_key_name || '(unknown)', keyPartial: r.api_key || '', type: r.type, price: parseFloat(r.price) || 0, amount: parseInt(r.amount) || 0 });
+            const { date, fine, hour } = norm(r);
+            if (date && r.model && r.type) amountData.push({ date, model: r.model, key: r.api_key_name || '(unknown)', keyPartial: r.api_key || '', type: r.type, price: parseFloat(r.price) || 0, amount: parseInt(r.amount) || 0, hour, _fine: fine, _key: date + '|' + r.model + '|' + (r.api_key_name || '(unknown)') + '|' + r.type });
           });
         }
       }
       loadedFiles.push(file.name);
       totalCsvFiles += csvFiles.length;
     }
+    // Дедупликация: детальный (почасовой) лог приоритетнее дневной агрегации.
+    // Если для даты+модели(+ключа/типа) есть детальные строки, дневные агрегаты
+    // тех же ключей отбрасываются. Убираем служебные поля из записей.
+    const costFine = new Set(costData.filter(r => r._fine).map(r => r._key));
+    costData = costData.filter(r => r._fine || !costFine.has(r._key));
+    const amountFine = new Set(amountData.filter(r => r._fine).map(r => r._key));
+    amountData = amountData.filter(r => r._fine || !amountFine.has(r._key));
+    costData.forEach(r => { delete r._fine; delete r._key; });
+    amountData.forEach(r => { delete r._fine; delete r._key; });
     if (!loadedFiles.length) { document.getElementById('spinner').style.display = 'none'; return; }
     document.getElementById('spinner').style.display = 'none';
     updateDropzoneDisplay();
@@ -418,13 +471,13 @@ function updateDropzoneDisplay() {
       <div class="fname">${loadedFiles.length} архив(ов) загружено</div>
       <div class="fdetail">${loadedFiles.join(', ')} &middot; данных за ${Math.max(costDays, amountDays)} дней</div>
     </div>
-    <button onclick="addMoreArchives()" style="margin-left:auto;background:var(--surface2);border:1px solid var(--border);color:var(--text2);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;">+ Добавить</button>
-    <button onclick="resetDropzone()" style="background:transparent;border:none;color:var(--text2);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:14px;">&#x2716;</button>
+    <button onclick="event.stopPropagation(); addMoreArchives()" style="margin-left:auto;background:var(--surface2);border:1px solid var(--border);color:var(--text2);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;">+ Добавить</button>
+    <button onclick="event.stopPropagation(); resetDropzone()" style="background:transparent;border:none;color:var(--text2);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:14px;">&#x2716;</button>
   `;
 }
 
 function addMoreArchives() {
-  document.getElementById('fileInput').click();
+  ensureFileInput().click();
 }
 
 function resetDropzone() {
@@ -435,10 +488,8 @@ function resetDropzone() {
   document.getElementById('tabs').style.display = 'none';
   document.getElementById('tokenDetail').style.display = 'none';
   dz.classList.remove('loaded');
-  dz.innerHTML = `<div class="icon">&#128230;</div><div class="title">Выберите архивы или перетащите их сюда</div><div class="hint">ZIP-архивы с CSV (cost-*.csv, amount-*.csv) — можно несколько сразу</div><input type="file" id="fileInput" accept=".zip" multiple>`;
-  document.getElementById('fileInput').addEventListener('change', e => {
-    if(e.target.files.length) handleFiles(e.target.files);
-  });
+  dz.innerHTML = `<div class="icon">&#128230;</div><div class="title">Выберите архивы или перетащите их сюда</div><div class="hint">ZIP-архивы с CSV (cost-*.csv, amount-*.csv) — можно несколько сразу</div>`;
+  ensureFileInput();
 }
 
 function destroyAllCharts() {
@@ -452,6 +503,7 @@ function renderAll() {
   document.getElementById('tabs').style.display = '';
   renderSummary();
   renderCostTables();
+  renderPeakSplit();
   renderUsageTables();
   renderCharts();
   renderTokenSection();
@@ -470,6 +522,9 @@ function renderSummary() {
   const totalIn = amountData.filter(r => r.type === 'input_cache_miss_tokens' || r.type === 'input_cache_hit_tokens').reduce((s, r) => s + r.amount, 0);
   const days = new Set(costData.map(r => r.date)).size;
   const keys = new Set(amountData.map(r => r.key)).size;
+  const hasHour = costData.some(r => r.hour !== undefined);
+  const peakCost = costData.filter(r => r.hour !== undefined && isPeakUtc(r.hour)).reduce((s, r) => s + r.cost, 0);
+  const offCost = costData.filter(r => r.hour !== undefined && !isPeakUtc(r.hour)).reduce((s, r) => s + r.cost, 0);
   document.getElementById('summary').innerHTML = `
     <div class="card"><div class="label">Всего затрат</div><div class="value green">${totalCost.toFixed(2)} USD</div></div>
     <div class="card"><div class="label">Запросов</div><div class="value cyan">${fmtInt(totalReqs)}</div></div>
@@ -477,7 +532,39 @@ function renderSummary() {
     <div class="card"><div class="label">Входные токены</div><div class="value pink">${fmtInt(totalIn)}</div></div>
     <div class="card"><div class="label">Токенов (API-ключей)</div><div class="value yellow">${keys}</div></div>
     <div class="card"><div class="label">Дней</div><div class="value">${days}</div></div>
+    ${hasHour ? `<div class="card"><div class="label">Пик / Не-пик</div><div class="value"><span style="color:var(--red,#f87171)">${fmtUsd(peakCost)}</span> / <span style="color:var(--green,#4ade80)">${fmtUsd(offCost)}</span> USD</div></div>` : ''}
   `;
+}
+
+// === Пик / не-пик (доступно только для почасовых данных) ===
+// Пиковые окна DeepSeek: 01:00–04:00 и 06:00–10:00 UTC.
+function isPeakUtc(h) { return (h >= 1 && h < 4) || (h >= 6 && h < 10); }
+
+function renderPeakSplit() {
+  const el = document.getElementById('peakSplit');
+  if (!el) return;
+  const fineCost = costData.filter(r => r.hour !== undefined);
+  const fineAmount = amountData.filter(r => r.hour !== undefined);
+  if (!fineCost.length && !fineAmount.length) {
+    el.innerHTML = '<div class="hint" style="color:var(--text2);padding:4px 0">Нет почасовых данных: для разбивки на пик / не-пик нужен архив за 1 день (интервалы &lt; 24 ч). Дневные архивы за 30 дней агрегируют сутки целиком, разбить их нельзя.</div>';
+    return;
+  }
+  const peak = { cost: 0, req: 0, out: 0, in: 0 }, off = { cost: 0, req: 0, out: 0, in: 0 };
+  fineCost.forEach(r => { (isPeakUtc(r.hour) ? peak : off).cost += r.cost; });
+  fineAmount.forEach(r => {
+    const t = isPeakUtc(r.hour) ? peak : off;
+    if (r.type === 'request_count') t.req += r.amount;
+    else if (r.type === 'output_tokens') t.out += r.amount;
+    else if (r.type === 'input_cache_hit_tokens' || r.type === 'input_cache_miss_tokens') t.in += r.amount;
+  });
+  const tot = peak.cost + off.cost;
+  const pct = v => tot > 0 ? `(${(v / tot * 100).toFixed(1)}%)` : '(—)';
+  el.innerHTML = `
+    <div class="table-wrap"><table>
+      <tr><th>Период</th><th>Затраты (USD)</th><th>Запросы</th><th>Вых. токены</th><th>Входные токены</th></tr>
+      <tr><td><span style="color:#f87171">&#9679;</span> Пик (01–04, 06–10 UTC)</td><td class="num"><strong>${fmt(peak.cost)}</strong> ${pct(peak.cost)}</td><td class="num">${fmtInt(peak.req)}</td><td class="num">${fmtInt(peak.out)}</td><td class="num">${fmtInt(peak.in)}</td></tr>
+      <tr><td><span style="color:#4ade80">&#9679;</span> Не-пик</td><td class="num"><strong>${fmt(off.cost)}</strong> ${pct(off.cost)}</td><td class="num">${fmtInt(off.req)}</td><td class="num">${fmtInt(off.out)}</td><td class="num">${fmtInt(off.in)}</td></tr>
+    </table></div>`;
 }
 
 // === Cost tables ===
@@ -489,10 +576,25 @@ function renderCostTables() {
   });
   const dates = Object.keys(byDay).sort();
   const models = [...new Set(costData.map(r => r.model))];
+  // Разбивка по пик/не-пик для дат с почасовыми данными:
+  // ключ "дата|p" / "дата|o" -> { cost, tokens } (токены без request_count).
+  const dayPeriod = {};
+  costData.forEach(r => {
+    if (r.hour === undefined) return;
+    const k = r.date + (isPeakUtc(r.hour) ? '|p' : '|o');
+    (dayPeriod[k] = dayPeriod[k] || { cost: 0, tokens: 0 }).cost += r.cost;
+  });
+  amountData.forEach(r => {
+    if (r.hour === undefined || r.type === 'request_count') return;
+    const k = r.date + (isPeakUtc(r.hour) ? '|p' : '|o');
+    (dayPeriod[k] = dayPeriod[k] || { cost: 0, tokens: 0 }).tokens += r.amount;
+  });
+  const perM = p => p && p.tokens > 0 ? (p.cost / p.tokens * 1e6).toFixed(3) : '—'; // $ за 1 млн токенов
   let html = '<tr><th>Дата</th>';
   models.forEach(m => { html += `<th>${MODEL_LABELS[m] || m}</th>`; });
-  html += '<th>Итого</th></tr>';
+  html += '<th>Итого</th><th>Пик (USD)</th><th>Не-пик (USD)</th><th>Пик $/1М ток.</th><th>Не-пик $/1М ток.</th></tr>';
   dates.forEach(d => {
+    const pc = dayPeriod[d + '|p'], oc = dayPeriod[d + '|o'];
     html += `<tr><td>${d}</td>`;
     let total = 0;
     models.forEach(m => {
@@ -500,7 +602,13 @@ function renderCostTables() {
       total += v;
       html += `<td class="num">${fmt(v)}</td>`;
     });
-    html += `<td class="num"><strong>${fmt(total)}</strong></td></tr>`;
+    html += `<td class="num"><strong>${fmt(total)}</strong></td>`;
+    const hasHour = pc || oc; // у даты есть почасовые данные
+    html += `<td class="num">${hasHour ? fmt(pc ? pc.cost : 0) : '—'}</td>`;
+    html += `<td class="num">${hasHour ? fmt(oc ? oc.cost : 0) : '—'}</td>`;
+    html += `<td class="num">${pc ? perM(pc) : '—'}</td>`;
+    html += `<td class="num">${oc ? perM(oc) : '—'}</td>`;
+    html += '</tr>';
   });
   document.querySelector('#costTable tbody').innerHTML = html;
 
